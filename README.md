@@ -66,11 +66,30 @@ python3 run.py board results-pair --suite paired --cases gemm_aiu_on gemm_aiu_of
 | `device.csv`、`occupancy.csv` | 记录 HBM 字节、CU、warp、TSM、运行时寄存器计数单位。以 1/8/32/64 条独立链构造 kernel，读回编译器实际分配的每线程寄存器、local 字节；扫描线程数和动态 TSM，查询 occupancy API 的理论 block/CU。 | CU 资源和驻留上限。结合 ACU 的 Block Limit Registers/Shared Mem/Warps 确认约束来源，再换算寄存器字节。API 上限与一次执行中实际并驻的 block 数分别记录。 |
 | `stream.csv` | 1–512 MiB 默认工作集，分别测读、写、copy。以设备 event 计时，保存五组原始样本。读 kernel 每线程写一个归约结果，写入字节另列；copy 合计读写两侧。 | HBM/LLC 有效带宽、工作集拐点。表内是程序逻辑字节。用指定工作集单 launch 的 ACU 下游字节、命中率确认流量实际经过哪一级。分不出 CE 私有容量时保留观测拐点。 |
 | `shared.csv` | 对 32 位共享内存读扫描 lane 间距 0/1/2/4/8/16/32 个 word；0 为同地址广播。用两种循环长度扣除固定初始化和栅栏成本。 | TSM bank 冲突相对代价和读服务率。跨 warp 的并发与循环里的累加也影响绝对值。 |
-| `math.csv`、`mma.csv` | FP32 FMA、`exp2(-x)`、`s/(1+x)`、BF16/FP8 warp MMA。1 warp/1 条依赖链测时间斜率，多 CU/4 条独立链测吞吐。32/128/512 步各五组。MMA 校验全 1 矩阵的累加结果。 | SIMD/SFU、矩阵依赖延迟和饱和率。数学循环记录每元素递推次数；除法还包含一次加法。兼容 MMA 为 m16n8k16 或 m16n8k32，模型 TC02 为 m16n16。先比 FLOP/s，再用 PASM 确认展开后推断单条 II。 |
+| `math.csv`、`mma.csv` | 1 warp/1 链测依赖延迟，4 链版本测交错执行递推的效果，每条链内部仍有依赖。FP32 FMA、`exp2(-x)`、`s/(1+x)`、BF16/FP8 warp MMA，32/128/512 步各五组。 | 用于依赖延迟与延迟隐藏；组件吞吐用下面的无递推实验。 |
+| `independent-array.csv` | 长 FP32 数组逐元素执行 `out[i]=exp2f(in[i])` 和 `out[i]=exp2f(-in[i])`。不同元素独立；每元素逻辑读 4 B、写 4 B。 | 单看完整 kernel 的结果/s、GB/s 随工作集的变化，再用 ACU 区分 HBM、缓存和计算瓶颈。 |
+| `independent-{fma,ex2,div,bf16,fp8}.csv` | 寄存器内产生独立输入，每个结果只进入整数校验和。FP32 目标是 `fma.rn`、`ex2.approx.ftz`、`div.rn`；矩阵 C 操作数来自新输入，下一条不读上一条 D。 | 扫并发度和展开数，测各组件可达到的服务率。用 PASM、执行计数检查指令是否保留、是否被拆分。 |
 | `gemm_aiu_on/`、`gemm_aiu_off/` | BF16 GEMM，M/N/K=128/64/96，两个 block，128 线程/block，tile=64×64×32，两级流水，只切换 AIU lowering。 | AIU 与普通搬运的相对表现、计算和数据到达的依赖。可核对源码、动态指令数、缓存字节及耗时差。 |
 | `gemm_multiwave/`、`vector/` | 前者用相同 tile 计算 640×512×96，grid 共 80 个 block，可考察 39 CU 上的分配与并驻；后者为 10240 个 FP32 元素计算 `(A+B)*(A-B)`，80 个 block。 | 把小 GEMM 得到的参数用于更多 block 和不同工作负载。80 个 block 的实际波数取决于资源与调度，需查驻留数据。 |
 
 原生 CSV 的时间单位为 µs/launch。`*-summary.json` 保留各组中位数、最小/最大值和逻辑服务率。计算依赖斜率可用 `(t512 − t128) × 实测核心MHz / 384` 周期/递推步，前提是同卡、同操作、同并行度、工况稳定。每步可能包含多条机器指令。内存绝对延迟、独立 AIU 命令启动延迟、各缓存写回策略仍需专门实验；本套件不会自动覆盖设备配置。
+
+## 单独运行吞吐测试
+
+```bash
+python3 run.py board results-throughput --suite throughput --smi-id 0 --acu
+python3 run.py pack results-throughput results-throughput.zip
+```
+
+在容器内用已经分配的空闲卡；此模式只需 PPU SDK 兼容编译器，使用 `--acu` 时还需 profiler。默认数组扫描到 512 MiB/数组，`--max-mib 32` 可缩短首次试跑。保留之前的递推数据用于比较。
+
+寄存器测试扫描全卡 grid 大小（CU 数的 1、8、16 倍，每 block 256 线程），每线程分别执行 128、512 个目标操作，并比较 4、16 路展开。输入由线程号和操作编号产生；计时循环内的目标计算无前次结果依赖，也不从 HBM 流式读取输入。索引生成、整数校验、循环和末尾写出也占用时间。每个形状先取五个样本的中位数，再看增大 grid、展开数或工作量后是否达到稳定平台。`--acu` 采集 8 blocks/CU、16 路、512 操作的参考点；数组采集最大工作集的负指数版本。时钟采样与 `.stderr` 的 CU 数和 PCI 地址一起保存。
+
+| 量 | 如何比较 |
+| --- | --- |
+| FP32 指令吞吐 | `target_ops_per_second / (CU 数 × 实际核心频率 Hz)` 得到元素/CU/周期。高层 `exp2f` 与近似 EX2 分开解读，`div.rn` 也可能展开为多条机器指令。 |
+| MMA 吞吐 | 计数单位为每 warp 一个矩阵片段。BF16 m16n8k16 按 4096 FLOP/片段、FP8 m16n8k32 按 8192 FLOP/片段，与 GTSim 不同形状的指令先用 FLOP/s 对齐。 |
+| 实测可达峰值 | 在有效计数和稳定频率下，取已饱和形状的中位吞吐。若仍随并发度上升或有 spill、辅助指令瓶颈，就只记录已达到的下界。理论峰值另由硬件规格给出。 |
 
 ## 同源算子与流水图核对
 

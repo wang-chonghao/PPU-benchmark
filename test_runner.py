@@ -10,6 +10,18 @@ import run
 
 
 class RunnerTest(unittest.TestCase):
+    def test_independent_ops_are_counted_once_per_launch(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "independent.csv"
+            path.write_text("kind,operation,target_ops_per_launch,flop_per_op,sample,repetitions,us_per_launch\n"
+                            "register,bf16,128,4096,0,8,2\narray,exp2f,2048,0,0,8,4\n")
+            mma, array = run.summarize(path)
+            self.assertEqual(mma["target_ops_per_second"], 64e6)
+            self.assertAlmostEqual(mma["TFLOP_s"], 128 * 4096 / 2e6)
+            self.assertEqual(array["target_ops_per_second"], 512e6)
+            self.assertEqual(array["logical_total_GB_s"], 4.096)
+            self.assertNotIn("TFLOP_s", array)
+
     def test_copy_counts_both_directions(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "stream.csv"

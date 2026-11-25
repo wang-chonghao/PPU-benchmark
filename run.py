@@ -50,6 +50,13 @@ def summarize(path):
         if row["kind"] == "stream":
             total = int(row["logical_read_bytes"]) + int(row["logical_write_bytes"])
             row["logical_total_GB_s"] = total / (us * 1000)
+        elif row["kind"] in ("register", "array"):
+            count = int(row["target_ops_per_launch"])
+            row["target_ops_per_second"] = count * 1e6 / us
+            if int(row["flop_per_op"]):
+                row["TFLOP_s"] = count * int(row["flop_per_op"]) / (us * 1e6)
+            if row["kind"] == "array":
+                row["logical_total_GB_s"] = 8 * count / (us * 1000)
         elif row["kind"] in ("mma", "math"):
             ops = int(row["blocks"]) * int(row["threads"]) * int(row["chains"]) * int(row["steps"])
             if row["kind"] == "mma":
@@ -68,7 +75,8 @@ def board(args):
     manifest = dict(platform=platform.platform(), python=sys.version, started_unix=time.time(),
                     visibility=os.environ.get("CUDA_VISIBLE_DEVICES"), runtime_device=0,
                     clock_note=args.clock_note, smi_id=args.smi_id,
-                    sources={p.name: digest(p) for p in (HERE / "probe.cu", HERE / "paired.py", HERE / "run.py")},
+                    sources={name: digest(HERE / name) for name in
+                             ("probe.cu", "probe_common.cuh", "throughput.cu", "paired.py", "run.py")},
                     steps=status)
 
     def step(name, action):
@@ -102,8 +110,9 @@ def board(args):
         try:
             if args.acu:
                 step("acu-version", lambda: run_logged(["acu", "--version"], out, "acu-version"))
-            if args.suite in ("all", "native"):
+            if args.suite in ("all", "native", "throughput"):
                 step("compiler", lambda: run_logged([args.nvcc, "--version"], out, "compiler"))
+            if args.suite in ("all", "native"):
                 base = [args.nvcc, "-O3", "-std=c++17", "-arch=" + args.arch, HERE / "probe.cu"]
                 exe = out / "probe"
                 if step("build", lambda: run_logged([*base, "-o", exe], out, "build")):
@@ -131,6 +140,24 @@ def board(args):
                     if args.acu:
                         for op in ("bf16", "fp8"):
                             step("acu-" + op, lambda: acu(op, [mma, "profile-" + op, 0]))
+            if args.suite in ("all", "native", "throughput"):
+                for binary, flags, operations in (
+                    ("independent", [], ("array", "fma", "ex2", "div")),
+                    ("independent-mma", ["-DPPU_PROBE_MMA"], ("bf16", "fp8")),
+                ):
+                    exe = out / binary
+                    build = [args.nvcc, "-O3", "-std=c++17", "-arch=" + args.arch, *flags,
+                             HERE / "throughput.cu", "-o", exe]
+                    if not step("build-" + binary, lambda: run_logged(build, out, "build-" + binary)):
+                        continue
+                    for op in operations:
+                        name = "independent-" + op
+                        def collect_independent():
+                            raw = out / (name + ".csv")
+                            run_logged([exe, op, args.max_mib], out, name, raw)
+                            save(out / (name + "-summary.json"), summarize(raw))
+                        if step(name, collect_independent) and args.acu:
+                            step("acu-" + name, lambda: acu(name, [exe, "profile-" + op, args.max_mib]))
             if args.suite in ("all", "paired"):
                 for case in args.cases:
                     dest = out / case
@@ -161,7 +188,9 @@ def board(args):
                 status["clock_monitor"] = dict(status="ok" if clock_ok else "failed", early_exit=early_exit,
                                                diagnostic="Check pclk samples and PCI identity in clocks.log and inventory.log")
             manifest["acu_cache_control"] = args.acu_cache if args.acu else None
-            manifest["native_executables"] = {p.name: digest(p) for p in (out / "probe", out / "probe-mma") if p.is_file()}
+            manifest["native_executables"] = {name: digest(out / name) for name in
+                                              ("probe", "probe-mma", "independent", "independent-mma")
+                                              if (out / name).is_file()}
             manifest["finished_unix"] = time.time()
             save(out / "manifest.json", manifest)
     return int(any(x["status"] != "ok" for x in status.values()))
@@ -243,7 +272,7 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     p = sub.add_parser("board")
     p.add_argument("out", type=Path)
-    p.add_argument("--suite", choices=("all", "native", "paired"), default="all")
+    p.add_argument("--suite", choices=("all", "native", "paired", "throughput"), default="all")
     p.add_argument("--smi-id", type=int, help="physical ppu-smi index matching runtime device 0")
     p.add_argument("--clock-note", default="unverified")
     p.add_argument("--nvcc", default="nvcc", help="PPU SDK CUDA-compatible compiler")
