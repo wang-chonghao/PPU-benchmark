@@ -9,7 +9,18 @@ CASES = ("gemm_aiu_on", "gemm_aiu_off", "gemm_multiwave", "vector")
 
 
 def workload(case):
-    import tilelang.ppu.language as T
+    try:
+        import tilelang.ppu.language as T
+    except ModuleNotFoundError as exc:
+        if exc.name not in ("tilelang.ppu", "tilelang.ppu.language"):
+            raise
+        import sys
+        import tilelang
+        raise RuntimeError(
+            f"paired requires the SAIL PPU dialect ({exc.name} missing). "
+            f"{sys.executable} loaded tilelang {getattr(tilelang, '__version__', 'unknown')} "
+            f"from {tilelang.__file__}. Check the container environment against the README."
+        ) from exc
 
     if case == "vector":
         n = 10240

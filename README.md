@@ -20,7 +20,26 @@ command -v python3 nvcc acu
 printf 'CUDA_VISIBLE_DEVICES=%s\n' "${CUDA_VISIBLE_DEVICES-未设置}"
 ```
 
-原生测试使用 Python 3.8+ 标准库和 PPU SDK 的 CUDA 兼容 `nvcc`；同源算子还需要能在该卡执行的 PyTorch 和 `t-head/tilelang-for-sail` PPU 版本，可用 `python3 -c 'import torch, tilelang; print(torch.cuda.is_available())'` 检查。JIT 接口按 `cd65f13d` 的 `tvm_ffi` 路径设计。ACU 采集需要 SDK 的 `acu`。如果只有 SDK，先运行 `--suite native`；缺少 ACU 时省去 `--acu` 仍可采集普通计时。[PPU 工具链对应关系](https://help.aliyun.com/en/document_detail/2864731.html) · [TileLang PPU fork](https://github.com/t-head/tilelang-for-sail)
+原生测试使用 Python 3.8+ 标准库和 PPU SDK 的 CUDA 兼容 `nvcc`。同源算子还需要能在该卡执行的 PyTorch 和提供 `tilelang.ppu.language` 的 SAIL TileLang。JIT 接口按 `cd65f13d` 的 `tvm_ffi` 路径设计。ACU 采集需要 SDK 的 `acu`。如果只有 SDK，先运行 `--suite native`；缺少 ACU 时省去 `--acu` 仍可采集普通计时。[PPU 工具链对应关系](https://help.aliyun.com/en/document_detail/2864731.html) · [TileLang PPU fork](https://github.com/t-head/tilelang-for-sail)
+
+在运行 benchmark 的同一容器和 Python 环境中检查 paired 的依赖：
+
+```bash
+python3 -u - <<'PY'
+import sys
+print("python:", sys.executable)
+import tilelang
+print("tilelang:", getattr(tilelang, "__version__", "unknown"), tilelang.__file__)
+import tilelang.ppu.language as T
+from tilelang import tvm
+print("language:", T.__file__)
+print("target:", tvm.target.Target({"kind": "ppu", "arch": "ppu_15"}))
+import torch
+print("torch:", torch.__version__, "device available:", torch.cuda.is_available())
+PY
+```
+
+如果缺少 `tilelang.ppu`，先核对解释器、包路径和机房提供的 SAIL 环境。参考版本的通用 `tilelang.language` 默认导出 CUDA 方言，直接替换 import 会改变编译入口。若检查通过但执行失败，以输出目录中对应 case 的 `.stderr` 完整 traceback 定位 JIT、设备加载或运行阶段。
 
 第一轮使用分配给你的单张空闲卡。程序使用进程内的逻辑设备 0；如果容器或作业系统已经限制可见设备，保留原有映射。`--smi-id` 填**容器内 `ppu-smi` 对这张卡显示的编号**。以下示例假定该编号为 0。若容器暴露多张卡且未设置可见设备，先按平台分配在容器内设置 `CUDA_VISIBLE_DEVICES`。采集后用 `device.csv` 的 PCI 地址与 `inventory.log` 核对监控的是否为执行测试的卡。
 
