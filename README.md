@@ -4,20 +4,36 @@
 
 ## 在内网运行
 
-进入带 PPU SDK 的 Linux 环境。原生测试使用 Python 3.8+ 标准库和 SDK 的 CUDA 兼容 `nvcc`；同源算子还需要能在该卡执行的 PyTorch 和 `t-head/tilelang-for-sail` PPU 版本。JIT 接口按 `cd65f13d` 的 `tvm_ffi` 路径设计。ACU 采集需要 SDK 的 `acu`。如果只有 SDK，先运行 `--suite native` 即可。[PPU 工具链对应关系](https://help.aliyun.com/en/document_detail/2864731.html) · [TileLang PPU fork](https://github.com/t-head/tilelang-for-sail)
-
-第一轮建议用一张空闲卡，收集普通计时和单独的 ACU 报告。下面以物理卡 0 为例。如果作业系统已设置可见设备，保留它的映射；程序使用进程内的逻辑设备 0。`--smi-id` 填对应的物理编号，用 `device.csv` 的 PCI 地址与 `inventory.log` 交叉确认。
+**宿主机上只用预置的 `nerdctl` 进入分配给你的 PPU 容器。** 如果已经在容器终端，直接跳到下一步。如果列表里找不到分配给你的容器，向平台管理员确认容器名或 nerdctl namespace；容器和设备挂载遵循机房配置。
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 run.py board results-card0 --smi-id 0 --acu
+nerdctl ps
+read -r -p '输入分配给你的容器名或 ID: ' ppu_container
+nerdctl exec -it "$ppu_container" bash
+```
+
+**以下操作全部在容器内执行。** 将离线源码包解压到分配的持久化工作目录，进入含 `run.py` 的目录。结果 ZIP 也保存在该工作目录，便于取回。先检查设备和工具：
+
+```bash
+ppu-smi
+command -v python3 nvcc acu
+printf 'CUDA_VISIBLE_DEVICES=%s\n' "${CUDA_VISIBLE_DEVICES-未设置}"
+```
+
+原生测试使用 Python 3.8+ 标准库和 PPU SDK 的 CUDA 兼容 `nvcc`；同源算子还需要能在该卡执行的 PyTorch 和 `t-head/tilelang-for-sail` PPU 版本，可用 `python3 -c 'import torch, tilelang; print(torch.cuda.is_available())'` 检查。JIT 接口按 `cd65f13d` 的 `tvm_ffi` 路径设计。ACU 采集需要 SDK 的 `acu`。如果只有 SDK，先运行 `--suite native`；缺少 ACU 时省去 `--acu` 仍可采集普通计时。[PPU 工具链对应关系](https://help.aliyun.com/en/document_detail/2864731.html) · [TileLang PPU fork](https://github.com/t-head/tilelang-for-sail)
+
+第一轮使用分配给你的单张空闲卡。程序使用进程内的逻辑设备 0；如果容器或作业系统已经限制可见设备，保留原有映射。`--smi-id` 填**容器内 `ppu-smi` 对这张卡显示的编号**。以下示例假定该编号为 0。若容器暴露多张卡且未设置可见设备，先按平台分配在容器内设置 `CUDA_VISIBLE_DEVICES`。采集后用 `device.csv` 的 PCI 地址与 `inventory.log` 核对监控的是否为执行测试的卡。
+
+```bash
+python3 run.py board results-card0 --smi-id 0 --acu
 python3 run.py pack results-card0 results-card0.zip
 ```
 
 带回 **`results-card0.zip`** 即可。即使部分测试失败也可以打包，`manifest.json` 列出各阶段状态和时间，对应的 `.stderr` 和 `.command.json` 保存原因和原始命令。每次使用新目录，保留之前的数据。只想快速检查环境或分开运行时可用：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 run.py board results-native --suite native --max-mib 32 --smi-id 0
-CUDA_VISIBLE_DEVICES=0 python3 run.py board results-pair --suite paired --cases gemm_aiu_on gemm_aiu_off --smi-id 0 --acu
+python3 run.py board results-native --suite native --max-mib 32 --smi-id 0
+python3 run.py board results-pair --suite paired --cases gemm_aiu_on gemm_aiu_off --smi-id 0 --acu
 ```
 
 32 MiB 适合快速检查；正式带宽扫描默认到 512 MiB/数组，两数组共约 1 GiB，可用 `--max-mib 1024` 或 `2048` 扩展。原生测试默认编译目标为兼容 ISA `sm_89`，TileLang 目标为 `ppu_15`。可用 `--nvcc /path/to/nvcc` 指定 PPU SDK 编译器。为了核对板间差异，可在另一张空闲卡用相同参数复测，输出到新目录。
