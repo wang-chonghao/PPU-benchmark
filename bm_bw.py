@@ -39,14 +39,19 @@ def cases(suite, grids):
         "--blocks", 64, "--threads", 512, "--workset-kb", 100, "--iters", 5000, "--smem-kb", 160]
 
 
-def read_counters(path, kernel):
+def kernel_counter_row(path, kernel):
     with path.open(encoding="utf-8-sig", newline="") as f:
         rows = [row for row in csv.DictReader(f) if kernel in (row.get("Kernel Name") or "")]
     if len(rows) != 1:
         raise ValueError(f"{path.name}: expected one raw counter row for {kernel}, got {len(rows)}")
+    return rows[0]
+
+
+def read_counters(path, kernel):
+    row = kernel_counter_row(path, kernel)
     values = {}
     for field, metric in METRICS.items():
-        raw = rows[0].get(metric)
+        raw = row.get(metric)
         if raw and raw.strip() not in ("n/a", "N/A", "--"):
             values[field] = float(raw.replace(",", "")) / (1e9 if field.endswith("GB_s") else 1)
     required = {"llc_read_kernel_u4": "llc_fabric_read_GB_s", "l2_bw_private_kernel": "l2_read_GB_s",

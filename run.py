@@ -14,6 +14,7 @@ import time
 import zipfile
 from collections import defaultdict
 import bm_bw
+import kvd_capacity
 
 from paired import CASES
 
@@ -77,7 +78,8 @@ def board(args):
                     visibility=os.environ.get("CUDA_VISIBLE_DEVICES"), runtime_device=0,
                     clock_note=args.clock_note, smi_id=args.smi_id,
                     sources={name: digest(HERE / name) for name in
-                             ("probe.cu", "probe_common.cuh", "throughput.cu", "paired.py", "bm_bw.py", "run.py")},
+                             ("probe.cu", "probe_common.cuh", "throughput.cu", "paired.py", "bm_bw.py",
+                              "kvd_capacity.cu", "kvd_capacity.py", "run.py")},
                     steps=status)
 
     def step(name, action):
@@ -93,10 +95,11 @@ def board(args):
         print(name, status[name]["status"], flush=True)
         return status[name]["status"] == "ok"
 
-    def acu(name, command):
+    def acu(name, command, metrics=None):
         prefix = out / ("acu-" + name)
+        selection = ["--metrics", ",".join(metrics)] if metrics else ["--set=full"]
         run_logged(["acu", "--clock-control", "none", "--cache-control", args.acu_cache,
-                    "--profile-from-start", "off", "--set=full",
+                    "--profile-from-start", "off", *selection,
                     "--target-processes", "all", "-o", prefix, *command], out, "acu-" + name)
         run_logged(["acu", "-i", str(prefix) + ".acurep", "--page", "raw", "--csv",
                     "--csv-file", str(prefix) + ".csv"], out, "acu-export-" + name)
@@ -111,8 +114,10 @@ def board(args):
         try:
             if args.acu:
                 step("acu-version", lambda: run_logged(["acu", "--version"], out, "acu-version"))
-            if args.suite in ("all", "native", "throughput", "bm-bw", "bm-ramp"):
+            if args.suite in ("all", "native", "throughput", "bm-bw", "bm-ramp", "kvd-capacity"):
                 step("compiler", lambda: run_logged([args.nvcc, "--version"], out, "compiler"))
+            if args.suite == "kvd-capacity":
+                kvd_capacity.collect(args, out, step, run_logged, acu)
             if args.suite in ("bm-bw", "bm-ramp"):
                 bm_bw.collect(args, out, step, run_logged, acu, save)
             if args.suite in ("all", "native"):
@@ -192,7 +197,7 @@ def board(args):
                                                diagnostic="Check pclk samples and PCI identity in clocks.log and inventory.log")
             manifest["acu_cache_control"] = args.acu_cache if args.acu else None
             manifest["native_executables"] = {name: digest(out / name) for name in
-                                              ("probe", "probe-mma", "independent", "independent-mma",
+                                              ("probe", "probe-mma", "independent", "independent-mma", "kvd-capacity",
                                                *("bm-" + key for key in bm_bw.SOURCES))
                                               if (out / name).is_file()}
             manifest["finished_unix"] = time.time()
@@ -276,7 +281,11 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     p = sub.add_parser("board")
     p.add_argument("out", type=Path)
-    p.add_argument("--suite", choices=("all", "native", "paired", "throughput", "bm-bw", "bm-ramp"), default="all")
+    p.add_argument("--suite", choices=("all", "native", "paired", "throughput", "bm-bw", "bm-ramp", "kvd-capacity"), default="all")
+    p.add_argument("--tsm-kib", nargs="+", type=int, default=[0, 64, 128, 160, 224],
+                   help="dynamic TSM per block in KiB for kvd-capacity (0..256)")
+    p.add_argument("--kvd-kib", nargs="+", type=int, default=[32, 64, 80, 96, 112, 128, 160, 256],
+                   help="private global address spans in KiB for kvd-capacity (1..512)")
     p.add_argument("--bm-root", type=Path, default=HERE / "BM", help="pinned BM source tree containing BW/")
     p.add_argument("--bm-blocks", type=int, nargs="+", choices=bm_bw.RAMP_BLOCKS, default=bm_bw.RAMP_BLOCKS,
                    help="subset of original 14 GiB ramp grids (bm-ramp only)")
@@ -300,6 +309,10 @@ def main():
     p.add_argument("results", type=Path)
     p.add_argument("archive", type=Path)
     args = parser.parse_args()
+    if args.mode == "board" and args.suite == "kvd-capacity":
+        if not all(0 <= n <= 256 for n in args.tsm_kib) or not all(1 <= n <= 512 for n in args.kvd_kib):
+            parser.error("kvd-capacity requires --tsm-kib in 0..256 and --kvd-kib in 1..512")
+        args.acu = True
     return {"board": board, "smoke": smoke, "replay": replay, "pack": pack}[args.mode](args)
 
 

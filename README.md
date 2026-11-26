@@ -83,6 +83,22 @@ python3 run.py board results-pair --suite paired --cases gemm_aiu_on gemm_aiu_of
 
 **频率对照。** `clocks.log` 保存指定卡的 `ppu-smi dmon` 采样，`--clock-note` 只记录实验标签。若机房已给同一张卡设置 1300 MHz，可以同样命令另跑一轮，加上 `--clock-note site-locked-1300`。记录机房的实际设置，并用监控核对运行工况。启动时的标称时钟和每秒一次的板卡采样均无法证明每个短 kernel 的实际频率。ACU 统一使用 `--clock-control none`。普通计时在无 profiler 的进程中完成。
 
+## PPU 1.5 的 TSM 与 KVD 容量对照
+
+在已有 SAIL SDK 和 ACU 的容器内运行，只用一张已分配的卡。此套件自动启用 ACU，独立于默认套件，无需 TileLang 或 BM 源码。先做 8 个 profile 点，再运行完整的 80 点扫描。两次都显式选择相同的缓存控制策略。
+
+```bash
+python3 run.py board results-kvd-smoke --suite kvd-capacity --acu-cache all --tsm-kib 0 160 --kvd-kib 64 128
+python3 run.py board results-kvd-full --suite kvd-capacity --acu-cache all
+python3 run.py pack results-kvd-full results-kvd-full.zip
+```
+
+同一可执行文件、同一 kernel，每个点只启动 1 个 block、128 个线程，排除 block 并驻数变化的影响。每轮按 64 B 步长对全局数组显式执行可缓存的 32 位 load，连续扫 100 轮，每轮结束时同步。工作集大小指扫描的**地址跨度**。每个进程分配相同大小的数组，输入内容和访问偏移一致。非零 TSM 申请只碰末尾一个字节。每个点都会与 CPU 计算的逐线程结果对比。
+
+每个 TSM 申请量（默认 0、64、128、160、224 KiB）和工作集（32、64、80、96、112、128、160、256 KiB）都运行两个独立进程。`default` 使用进程默认偏好，`prefer_shared` 调用 `cudaFuncSetCacheConfig(..., cudaFuncCachePreferShared)`。两组都设置相同的函数动态共享内存上限，然后只通过启动参数改变实际 TSM 申请量。ACU 窗口内仅有一个目标 kernel。运行器核对 ACU 记录的动态字节数，API 返回错误、CPU 校验失败或缺失计数都会记为失败。
+
+查看 **`kvd-capacity.csv`**。固定 TSM 和工作集，看 `hit_delta_from_default_pp`（显式偏好减默认的 KVD 读命中率，单位百分点）；固定偏好，沿工作集从小到大比较不同 TSM 申请量下的命中率曲线。拐点移动时，用 `l2_load_transactions_from_l1` 核对下行读事务是否同步增加，并在相同条件下复测。结果记录为 `failed` 的点需查看 `manifest.json` 和对应 stderr。每个成功点附原始 ACU CSV、报告与含输入基址及函数上限的 `*-check.json`。如果曲线重合，只能说明这个 SDK、固定函数上限和测试访问模式下没有观测到变化；默认偏好也可能已经选中相同策略。
+
 ## 各测试能校准什么
 
 | 产物 | 工作负载与口径 | 对应 GTSim 参数 |
