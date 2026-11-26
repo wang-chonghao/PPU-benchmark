@@ -2,6 +2,30 @@
 
 在真武 M890P 上测 GTSim 所需的设备资源、持续带宽、矩阵和向量吞吐，并用四个 TileLang kernel 对照实机与仿真。八卡服务器上每次只占用一张指定卡。设备端无需 GTSim、外网或管理员权限。脚本沿用机器当前的频率策略。
 
+## 复跑 BM 的 HBM、LLC 和 L2 带宽
+
+在已分配单卡的容器内，解压含 BM 源码的离线包，进入含 `run.py` 的目录。沿用分配的设备映射。以下示例中，`0` 是这张卡在容器内对应的 `ppu-smi` 编号，按实际替换。
+
+```bash
+python3 run.py board results-bm-bw --suite bm-bw --acu --smi-id 0
+python3 run.py board results-bm-ramp --suite bm-ramp --bm-blocks 2 16 32 64 128 256 --acu --smi-id 0
+python3 run.py pack results-bm-bw bm-bw.zip
+python3 run.py pack results-bm-ramp bm-ramp.zip
+```
+
+离线包已附四份原始 CUDA 源文件。使用 GitHub checkout 时，可在有外网的机器取得上游提交 `9221f6624d7c3525bb8cd31fd1c7f50967accf01`，将其 `BW/test_peak/{dram_bw,llc_bw,l2_bw}.cu` 和 `BW/test_dram_climb/dram_bw.cu` 按原层级放在 `BM/` 下，或通过 `--bm-root /path/to/BM` 指定。每次编译前核对源码哈希。两个套件需 PPU SDK；省去 `--acu` 可先取得普通 event 计时。这些长测单独启动。[上游命令及指标说明](https://gitcode.com/xxy20183691/BM/blob/main/BW/BW.md)
+
+| 用例 | 工作集与启动方式 | 主要比较项 |
+|---|---|---|
+| `dram-auto-read/write/copy` | 每数组 16 GiB，512 threads，按各 kernel 的 occupancy 选 grid。预热 100 遍，一次正式 launch 扫 20 遍。copy 需要两个大数组。 | 对照上游 4 号卡 read 普通计时 2117 GB/s、ACU full 的 DRAM 读 2118 GB/s。写和 copy 使用相同程序；copy 按读写双向合计。 |
+| `dram-fixed-read` | 16 GiB，1024 blocks × 256 threads，显式固定线程数 | 复核文档列出的历史 grid。当前源码省略 threads 会使用 512。 |
+| `dram-512MiB-read` | 512 MiB，1248 blocks × 256 threads | 本仓增加的对照点，匹配此前 39 CU 的 scalar stream 测试尺寸和 grid，保留 BM 的 uint4 循环、预热和计时方式。 |
+| `llc-read` | 32 MiB，256 threads，自动选择单波 grid，5000 遍且每遍移动起始位置 | 看 LLC fabric 读速率、L2/LLC hit 和 DRAM 读速率。上游 4 号卡为 273 blocks，实测 LLC 约 2.12 TB/s。 |
+| `l2-read` | 64 blocks × 512 threads，每 block 独立读 100 KiB，申请 160 KiB shared，5000 遍 | 对照 L2 load 计数器。 |
+| `bm-ramp` | 14 GiB，1024 threads，20 遍，分别读和写。去掉 `--bm-blocks` 可跑原始报告全部 40 种 grid、80 个用例。小 grid 的用例耗时较长。 | 横轴为提交的 blocks。历史报告记录了 grid 与线程数，复跑使用固定提交的现行源代码和 100 遍预热。历史爬坡二进制与当前源码的同一性未经验证。 |
+
+每行结果保存在 `bm-bandwidth.csv`。`logical_GB_s` 取未插桩进程打印的有效带宽，`dram_read_GB_s`、`dram_write_GB_s`、`llc_fabric_read_GB_s`、`l2_read_GB_s` 取单独 ACU 运行中的对应计数器，均为十进制 GB/s。未采集的字段留空；打开 `manifest.json` 检查各测项状态。每行的 `.log` 保存实际启动参数，ACU 原始 CSV、报告及命令也一并保存。脚本不改设备频率。上游文档中的 2.77 TB/s 是按 ACU 利用率反推的 DRAM 峰值，跨机器优先比较相同条件下的实测值。
+
 ## 在内网运行
 
 **宿主机上只用预置的 `nerdctl` 进入分配给你的 PPU 容器。** 如果已经在容器终端，直接跳到下一步。如果列表里找不到分配给你的容器，向平台管理员确认容器名或 nerdctl namespace；容器和设备挂载遵循机房配置。

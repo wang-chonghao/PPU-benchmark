@@ -13,6 +13,7 @@ import sys
 import time
 import zipfile
 from collections import defaultdict
+import bm_bw
 
 from paired import CASES
 
@@ -76,7 +77,7 @@ def board(args):
                     visibility=os.environ.get("CUDA_VISIBLE_DEVICES"), runtime_device=0,
                     clock_note=args.clock_note, smi_id=args.smi_id,
                     sources={name: digest(HERE / name) for name in
-                             ("probe.cu", "probe_common.cuh", "throughput.cu", "paired.py", "run.py")},
+                             ("probe.cu", "probe_common.cuh", "throughput.cu", "paired.py", "bm_bw.py", "run.py")},
                     steps=status)
 
     def step(name, action):
@@ -110,8 +111,10 @@ def board(args):
         try:
             if args.acu:
                 step("acu-version", lambda: run_logged(["acu", "--version"], out, "acu-version"))
-            if args.suite in ("all", "native", "throughput"):
+            if args.suite in ("all", "native", "throughput", "bm-bw", "bm-ramp"):
                 step("compiler", lambda: run_logged([args.nvcc, "--version"], out, "compiler"))
+            if args.suite in ("bm-bw", "bm-ramp"):
+                bm_bw.collect(args, out, step, run_logged, acu, save)
             if args.suite in ("all", "native"):
                 base = [args.nvcc, "-O3", "-std=c++17", "-arch=" + args.arch, HERE / "probe.cu"]
                 exe = out / "probe"
@@ -189,7 +192,8 @@ def board(args):
                                                diagnostic="Check pclk samples and PCI identity in clocks.log and inventory.log")
             manifest["acu_cache_control"] = args.acu_cache if args.acu else None
             manifest["native_executables"] = {name: digest(out / name) for name in
-                                              ("probe", "probe-mma", "independent", "independent-mma")
+                                              ("probe", "probe-mma", "independent", "independent-mma",
+                                               *("bm-" + key for key in bm_bw.SOURCES))
                                               if (out / name).is_file()}
             manifest["finished_unix"] = time.time()
             save(out / "manifest.json", manifest)
@@ -272,7 +276,10 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     p = sub.add_parser("board")
     p.add_argument("out", type=Path)
-    p.add_argument("--suite", choices=("all", "native", "paired", "throughput"), default="all")
+    p.add_argument("--suite", choices=("all", "native", "paired", "throughput", "bm-bw", "bm-ramp"), default="all")
+    p.add_argument("--bm-root", type=Path, default=HERE / "BM", help="pinned BM source tree containing BW/")
+    p.add_argument("--bm-blocks", type=int, nargs="+", choices=bm_bw.RAMP_BLOCKS, default=bm_bw.RAMP_BLOCKS,
+                   help="subset of original 14 GiB ramp grids (bm-ramp only)")
     p.add_argument("--smi-id", type=int, help="physical ppu-smi index matching runtime device 0")
     p.add_argument("--clock-note", default="unverified")
     p.add_argument("--nvcc", default="nvcc", help="PPU SDK CUDA-compatible compiler")
