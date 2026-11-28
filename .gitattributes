@@ -1,0 +1,4 @@
+# Preserve upstream bytes: provenance.json validates these exact SHA-256 hashes.
+/third_party/deepseek_v41/kernel.py -text
+/third_party/deepseek_v41/config.json -text
+/third_party/deepseek_v41/LICENSE -text whitespace=cr-at-eol

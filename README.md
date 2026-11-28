@@ -1,5 +1,20 @@
 # PPU 1.5 单卡校准 benchmark
 
+新增 [DeepSeek v4.1 同源算子实卡套件](docs/DEEPSEEK_V41.md)：固定版本 DeepSeek
+官方参考中的全部 6 类 TileLang kernel，12 个已有流水对齐/覆盖点和20个模型尺寸测试点。
+它们不是“阿里官方 shape”，也不覆盖整模型全部 PyTorch/通信节点。测试原样使用参考
+kernel，导出实测同一次编译的 device TIR、输入、正确性结果与耗时供 GTSim 比较。
+
+```bash
+python3 deepseek_v41.py plan --suite all
+python3 deepseek_v41.py run results-dsv41-first --cases gemm_fp8
+python3 deepseek_v41.py run results-dsv41-smoke --suite smoke --acu
+python3 deepseek_v41.py run results-dsv41-model --suite model --acu
+```
+
+在机房已配置的 SAIL 容器内运行，完整环境、shape来源、频率/缓存口径和失败处理见上述文档。
+`run.py --suite all` 不自动包含此独立套件。
+
 在真武 M890P 上测 GTSim 所需的设备资源、持续带宽、矩阵和向量吞吐，并用四个 TileLang kernel 对照实机与仿真。八卡服务器上每次只占用一张指定卡。设备端无需 GTSim、外网或管理员权限。脚本沿用机器当前的频率策略。
 
 ## 新增：ISSUE 7 与存储层级补测

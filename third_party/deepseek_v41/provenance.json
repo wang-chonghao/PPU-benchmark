@@ -1,0 +1,13 @@
+{
+  "repository": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017",
+  "revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
+  "publisher": "DeepSeek (not Alibaba)",
+  "compiler_repository": "https://github.com/t-head/tilelang-for-sail",
+  "compiler_reference_revision": "cd65f13dbffffef1d72fed6620c74886cb1ab877",
+  "files_unmodified": true,
+  "sha256": {
+    "kernel.py": "1236c3507019ed176f5dba5e04bcea58867cf654818c6cf138ed4845398c2455",
+    "config.json": "2e84f45cf1dac8c7fcbb200e96667d4b913275690668ed496f24c7747207a809",
+    "LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040"
+  }
+}
