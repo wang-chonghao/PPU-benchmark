@@ -2,9 +2,26 @@
 
 在真武 M890P 上测 GTSim 所需的设备资源、持续带宽、矩阵和向量吞吐，并用四个 TileLang kernel 对照实机与仿真。八卡服务器上每次只占用一张指定卡。设备端无需 GTSim、外网或管理员权限。脚本沿用机器当前的频率策略。
 
+## 新增：ISSUE 7 与存储层级补测
+
+完整步骤、公式、失败处理及参数登记见 [内网校准手册](docs/INTRANET_CALIBRATION.md)。本轮约束是**数据不可外传**：所有原始数据、PASM、TIR 和分析结果均留在内网，下面的打包仅用于内网备份/转移。源码可离线带入；不要上传结果 ZIP。
+
+新增 `supplement.py` / `calibration_probe.cu`：FP16/32/64 向量、FP16/BF16/FP8 矩阵的独立吞吐与依赖链；TSM 纯读/纯写/混合；TSM/缓存依赖读取、SHFL 和 barrier。新增 `paired_sweep.py` 检查同源 TileLang 的执行粒度、MNK 边界、tiling、EXP 和分支汇合。运行器保存失败、哈希、原始样本和命令；标准库分析器只生成候选参数，不修改配置。
+
+```bash
+# 在已分配的容器、单卡中运行。
+python3 -m unittest test_runner test_supplement
+python3 supplement.py run cal-smoke --suite smoke --smi-id 0
+python3 supplement.py analyze cal-smoke
+```
+
+新增设备代码尚待内网 PPU SDK 编译与冒烟验证。FP32/FP4 原生 Cube、纯 SFU 结果延迟、AIU 命令隔离及队列深度不能由现有通用入口直接确认；手册明确给出所需证据、实验步骤和停止定值的条件，不把兼容指令或复合 kernel 冒充目标硬件参数。
+
+另外提供纯主机端的 [GTSim ISSUE 7 参数绑定复核](docs/GTSIM_ISSUE7_REVIEW.md)及 `gtsim_issue7_probe.py`，用于检查 Cube 新旧入口和 conversion/cost 配置优先级；这不是实卡测试。
+
 ## 复跑 BM 的 HBM、LLC 和 L2 带宽
 
-在已分配单卡的容器内，解压含 BM 源码的离线包，进入含 `run.py` 的目录。沿用分配的设备映射。以下示例中，`0` 是这张卡在容器内对应的 `ppu-smi` 编号，按实际替换。
+在已分配单卡的容器内，解压此前含 BM 源码的离线包，进入含 `run.py` 的目录。新补测源码包不重复附 BM 源码。沿用分配的设备映射。以下示例中，`0` 是这张卡在容器内对应的 `ppu-smi` 编号，按实际替换。
 
 ```bash
 python3 run.py board results-bm-bw --suite bm-bw --acu --smi-id 0
@@ -72,7 +89,7 @@ python3 run.py board results-card0 --smi-id 0 --acu
 python3 run.py pack results-card0 results-card0.zip
 ```
 
-带回 **`results-card0.zip`** 即可。即使部分测试失败也可以打包，`manifest.json` 列出各阶段状态和时间，对应的 `.stderr` 和 `.command.json` 保存原因和原始命令。每次使用新目录，保留之前的数据。只想快速检查环境或分开运行时可用：
+**`results-card0.zip` 仅供内网备份和分析，不外传。** 即使部分测试失败也可以打包，`manifest.json` 列出各阶段状态和时间，对应的 `.stderr` 和 `.command.json` 保存原因和原始命令。每次使用新目录，保留之前的数据。只想快速检查环境或分开运行时可用：
 
 ```bash
 python3 run.py board results-native --suite native --max-mib 32 --smi-id 0
@@ -139,7 +156,7 @@ python3 run.py pack results-throughput results-throughput.zip
 
 `--acu` 为 TileLang 各用例另起进程，在 profiler start/stop 内只发起一次目标调用，并核对 profile 与普通计时的 TIR 和生成源码哈希。同时对 stream 的 32 MiB（较小扫描上限时取其上限）及最大工作集采集读、copy 报告。`.acurep` 可用官方 GUI 查看，`acu-*.csv` 可直接分析。默认 `--acu-cache none` 仍可能刷新 L1/L2；若需跟冷启动模拟对照，可在另一轮使用 `--acu-cache all`。官方工具报告 warp stall、PASM 计数、寄存器及流量；这些统计约束流水图，无法恢复每一条指令的逐周期时间戳。[ACU 时钟与缓存控制](https://help.aliyun.com/zh/document_detail/3012044.html) · [ACU 指标和 GUI](https://help.aliyun.com/zh/document_detail/3030030.html)
 
-把 zip 解压到仿真机器。以下示例假设 `PPU-benchmark` 与工作版 `GTSim-ppu` 是相邻目录；其他布局可传 `--adaptor`，smoke 还可传 `--fixtures`。
+将 GTSim 源码和构建环境带入内网，在内网仿真机器分析结果。以下示例假设 `PPU-benchmark` 与工作版 `GTSim-ppu` 是相邻目录；其他布局可传 `--adaptor`，smoke 还可传 `--fixtures`。
 
 ```bash
 python3 run.py smoke smoke-out --sim ../GTSim-ppu/build/gtsim_ir

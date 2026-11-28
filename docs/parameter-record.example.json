@@ -1,0 +1,41 @@
+{
+  "privacy": "Keep all filled records and raw artifacts inside the intranet.",
+  "device": {"sku": null, "pci": null, "active_cus": null, "sdk": null, "compiler": null, "tilelang": null},
+  "records": [
+    {
+      "parameter": "vector operation/dtype execution granule and throughput",
+      "operation": "add",
+      "input_dtype": "float16",
+      "compute_dtype": null,
+      "output_dtype": "float16",
+      "scope": "per CU; execution group definition required",
+      "value": null,
+      "range": null,
+      "unit": "elements/core-cycle/CU",
+      "execution_granule_elements": null,
+      "matrix_m_n_k": null,
+      "issue_interval_cycles": null,
+      "result_latency_cycles": null,
+      "latency_start_event": null,
+      "latency_end_event": null,
+      "status": "inconclusive",
+      "case_ids": [],
+      "source_sha256": null,
+      "binary_sha256": null,
+      "core_mhz": null,
+      "frequency_evidence": null,
+      "pasm_opcodes": [],
+      "native_operations_per_step": null,
+      "counter_unit_and_scope": null,
+      "cache_state_and_evidence": null,
+      "active_CU_and_occupancy_evidence": null,
+      "spill_check": null,
+      "fit_r_squared": null,
+      "sample_range_fraction": null,
+      "concurrency_plateau_evidence": null,
+      "current_model_value": null,
+      "proposed_value": null,
+      "reason_and_limitations": "Fill from actual data; do not copy the model assumption as a measurement."
+    }
+  ]
+}
